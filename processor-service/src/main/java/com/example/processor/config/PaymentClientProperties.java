@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "payment.client")
 public class PaymentClientProperties {
 
-    private String baseUrl = "http://localhost:8080";
+    private String baseUrl = "http://localhost:8082";
 
     public String getBaseUrl() {
         return baseUrl;
