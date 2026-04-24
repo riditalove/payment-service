@@ -1,0 +1,11 @@
+com\example\processor\config\RabbitListenerConfiguration.class
+com\example\processor\dto\PaymentStatus.class
+com\example\processor\dto\UpdatePaymentStatusRequest.class
+com\example\processor\client\PaymentServiceClient.class
+com\example\processor\dto\PaymentCreatedEvent.class
+com\example\processor\listener\PaymentCreatedListener.class
+com\example\processor\config\RestClientConfiguration.class
+com\example\processor\service\PaymentProcessingService.class
+com\example\processor\ProcessorApplication.class
+com\example\processor\config\PaymentClientProperties.class
+com\example\processor\config\PaymentRetryConfiguration.class
