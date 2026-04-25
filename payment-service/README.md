@@ -35,6 +35,29 @@ PaymentService
                                                 queue: payments.queue
 ```
 
+### Architecture Diagram (Mermaid)
+
+```mermaid
+flowchart LR
+    C[Client] --> PC[PaymentController]
+    PC --> PS[PaymentService]
+
+    PS --> CES[CardEncryptionService]
+    CES --> ESC[EncryptionServiceClient]
+    ESC --> ENC["POST /encrypt (same service or external)"]
+
+    PS --> PR[PaymentRepository]
+    PR --> DB[(PostgreSQL)]
+
+    PS --> PEP[PaymentEventPublisher]
+    PEP --> RT[RabbitTemplate]
+    RT --> EX[[payments.exchange]]
+    EX -->|payments.created| Q[[payments.queue]]
+    Q --> PROC[processor-service]
+    PROC --> PATCH["PATCH /payments/{id}/status"]
+    PATCH --> PC
+```
+
 ---
 
 ## Package Structure
@@ -136,6 +159,34 @@ Note: the current package name is `paymet` (as implemented in code).
 2. It processes event and calls:
    - `PATCH /payments/{id}/status`
 3. `payment-service` updates status (typically `SUCCESS` or `FAILED`).
+
+### Sequence Diagram (Create Payment + Event Processing)
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Controller as PaymentController
+    participant Service as PaymentService
+    participant Encrypt as EncryptionServiceClient
+    participant Repo as PaymentRepository
+    participant Rabbit as RabbitMQ
+    participant Processor as processor-service
+
+    Client->>Controller: POST /payments
+    Controller->>Service: createPayment(request)
+    Service->>Encrypt: POST /encrypt
+    Encrypt-->>Service: cipherText
+    Service->>Repo: save(payment: PENDING)
+    Repo-->>Service: saved payment (id)
+    Service->>Rabbit: publish PaymentCreatedEvent(paymentId)
+    Service-->>Controller: PaymentResponse
+    Controller-->>Client: 201 Created
+
+    Rabbit-->>Processor: payment.created event
+    Processor->>Controller: PATCH /payments/{id}/status (SUCCESS/FAILED)
+    Controller->>Service: updatePaymentStatus(id, status)
+    Service->>Repo: save(updated status)
+```
 
 ---
 
