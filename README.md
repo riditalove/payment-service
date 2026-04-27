@@ -4,6 +4,7 @@
 
 `payment-service` is a Spring Boot service that:
 
+- Integrates with `auth-service` for JWT-based user authentication.
 - Creates and stores payments in PostgreSQL.
 - Encrypts incoming card numbers before persistence.
 - Publishes a `payment.created`-style event to RabbitMQ after payment creation.
@@ -19,6 +20,15 @@ The service follows a layered design:
 
 ```text
 Client
+  |
+  v
+auth-service (/auth/register, /auth/login, /auth/validate)
+  |
+  v
+JWT token (Bearer)
+  |
+  v
+Payment API client
   |
   v
 PaymentController (/payments)
@@ -39,7 +49,10 @@ PaymentService
 
 ```mermaid
 flowchart LR
-    C[Client] --> PC[PaymentController]
+    C[Client] --> AS[auth-service]
+    AS --> TK[JWT Token]
+    TK --> C2[Client with Bearer token]
+    C2 --> PC[PaymentController]
     PC --> PS[PaymentService]
 
     PS --> CES[CardEncryptionService]
@@ -144,16 +157,25 @@ Note: the current package name is `paymet` (as implemented in code).
 
 ## Request and Event Flows
 
-## Flow A: Create Payment (`POST /payments`)
+## Flow A: Authenticate User (JWT)
 
-1. Request arrives at `PaymentController`.
-2. `PaymentService.createPayment()` validates input.
-3. Card is encrypted through `CardEncryptionService`.
-4. Payment is saved in PostgreSQL with status `PENDING`.
-5. `PaymentEventPublisher` publishes `{ "paymentId": "<uuid>" }` to RabbitMQ.
-6. Response returns created payment payload.
+1. Client registers via `POST /auth/register`.
+2. Client logs in via `POST /auth/login`.
+3. `auth-service` verifies credentials and issues a signed JWT.
+4. Client calls payment APIs with `Authorization: Bearer <token>`.
+5. Services can validate token via `POST /auth/validate` when needed.
 
-## Flow B: Processor Updates Status
+## Flow B: Create Payment (`POST /payments`)
+
+1. Client authenticates and obtains JWT from `auth-service`.
+2. Request arrives at `PaymentController`.
+3. `PaymentService.createPayment()` validates input.
+4. Card is encrypted through `CardEncryptionService`.
+5. Payment is saved in PostgreSQL with status `PENDING`.
+6. `PaymentEventPublisher` publishes `{ "paymentId": "<uuid>" }` to RabbitMQ.
+7. Response returns created payment payload.
+
+## Flow C: Processor Updates Status
 
 1. `processor-service` consumes from `payments.queue`.
 2. It processes event and calls:
@@ -165,6 +187,7 @@ Note: the current package name is `paymet` (as implemented in code).
 ```mermaid
 sequenceDiagram
     participant Client
+    participant Auth as auth-service
     participant Controller as PaymentController
     participant Service as PaymentService
     participant Encrypt as EncryptionServiceClient
@@ -172,7 +195,9 @@ sequenceDiagram
     participant Rabbit as RabbitMQ
     participant Processor as processor-service
 
-    Client->>Controller: POST /payments
+    Client->>Auth: POST /auth/login
+    Auth-->>Client: JWT token
+    Client->>Controller: POST /payments (Bearer token)
     Controller->>Service: createPayment(request)
     Service->>Encrypt: POST /encrypt
     Encrypt-->>Service: cipherText
@@ -192,6 +217,7 @@ sequenceDiagram
 
 ## External Integrations
 
+- **Auth Service** for JWT issue and validation.
 - **PostgreSQL** for payment persistence.
 - **RabbitMQ** for async event delivery.
 - **Processor Service** consumes payment events and updates status.
