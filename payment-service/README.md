@@ -157,14 +157,15 @@ Note: the current package name is `paymet` (as implemented in code).
 
 ## Request and Event Flows
 
-## Flow A: Create Payment (`POST /payments`)
+## Flow A: Authentication + Payment Creation
 
-1. Request arrives at `PaymentController`.
-2. `PaymentService.createPayment()` validates input.
-3. Card is encrypted through `CardEncryptionService`.
-4. Payment is saved in PostgreSQL with status `PENDING`.
-5. `PaymentEventPublisher` publishes `{ "paymentId": "<uuid>" }` to RabbitMQ.
-6. Response returns created payment payload.
+1. Client registers user with `POST /auth/register`.
+2. Client logs in via `POST /auth/login`.
+3. `auth-service` verifies credentials and returns a signed JWT.
+4. Client sends `Authorization: Bearer <token>` to `POST /payments`.
+5. `payment-service` calls `POST /auth/validate` on `auth-service`.
+6. If token is valid, request continues to `PaymentService.createPayment()`.
+7. Card is encrypted, payment is saved with status `PENDING`, and event is published.
 
 ## Flow B: Processor Updates Status
 
@@ -173,7 +174,7 @@ Note: the current package name is `paymet` (as implemented in code).
    - `PATCH /payments/{id}/status`
 3. `payment-service` updates status (typically `SUCCESS` or `FAILED`).
 
-### Sequence Diagram (Create Payment + Event Processing)
+### Sequence Diagram (Auth + Create + Event Processing)
 
 ```mermaid
 sequenceDiagram
@@ -186,9 +187,12 @@ sequenceDiagram
     participant Rabbit as RabbitMQ
     participant Processor as processor-service
 
+    Client->>Auth: POST /auth/register
     Client->>Auth: POST /auth/login
     Auth-->>Client: JWT token
-    Client->>Controller: POST /payments
+    Client->>Controller: POST /payments (Bearer token)
+    Controller->>Auth: POST /auth/validate
+    Auth-->>Controller: valid=true
     Controller->>Service: createPayment(request)
     Service->>Encrypt: POST /encrypt
     Encrypt-->>Service: cipherText
@@ -203,16 +207,6 @@ sequenceDiagram
     Controller->>Service: updatePaymentStatus(id, status)
     Service->>Repo: save(updated status)
 ```
-
----
-
-## Flow C: Authentication (JWT)
-
-1. Client registers user with `POST /auth/register`.
-2. Client logs in via `POST /auth/login`.
-3. `auth-service` verifies credentials and returns a signed JWT.
-4. Client sends JWT in `Authorization: Bearer <token>` when calling protected APIs.
-5. Services can validate token via `POST /auth/validate` before processing.
 
 ---
 
@@ -238,8 +232,23 @@ Current defaults in `src/main/resources/application.properties`:
   - username/password `guest`/`guest`
 - Encryption client base URL:
   - `http://localhost:${server.port}`
+- Auth client base URL:
+  - `http://localhost:8083`
+- Auth client timeouts:
+  - `auth.service.connect-timeout-ms=5000`
+  - `auth.service.read-timeout-ms=10000`
 
 If you run RabbitMQ on standard port `5672`, update both service configs accordingly.
+
+---
+
+## JWT Enforcement in `payment-service`
+
+- `payment-service` protects `/payments/**` endpoints with a JWT interceptor.
+- Missing or malformed `Authorization` header returns `401 Unauthorized`.
+- Invalid token (or `auth-service` rejects it) returns `401 Unauthorized`.
+- If `auth-service` is unavailable during validation, `payment-service` returns `503 Service Unavailable`.
+- Encryption endpoints (`/encrypt`, `/decrypt`) are not part of payment API auth flow.
 
 ---
 
@@ -279,12 +288,14 @@ Get payment:
 
 ```bash
 curl --location 'http://localhost:8082/payments/{paymentId}'
+--header 'Authorization: Bearer <jwt-token>'
 ```
 
 Update status:
 
 ```bash
 curl --location --request PATCH 'http://localhost:8082/payments/{paymentId}/status' \
+--header 'Authorization: Bearer <jwt-token>' \
 --header 'Content-Type: application/json' \
 --data '{
   "status": "SUCCESS"
@@ -320,6 +331,36 @@ curl --location 'http://localhost:8083/auth/validate' \
 --header 'Content-Type: application/json' \
 --data '{
   "token": "<jwt-token>"
+}'
+```
+
+End-to-end flow (register -> login -> create payment):
+
+```bash
+# 1) Register (one-time)
+curl --location 'http://localhost:8083/auth/register' \
+--header 'Content-Type: application/json' \
+--data '{
+  "username": "alice",
+  "password": "password123"
+}'
+
+# 2) Login (copy token from response)
+curl --location 'http://localhost:8083/auth/login' \
+--header 'Content-Type: application/json' \
+--data '{
+  "username": "alice",
+  "password": "password123"
+}'
+
+# 3) Use token with payment-service
+curl --location 'http://localhost:8082/payments' \
+--header 'Authorization: Bearer <jwt-token>' \
+--header 'Content-Type: application/json' \
+--data '{
+  "amount": 19.99,
+  "currency": "USD",
+  "cardNumber": "4111111111111111"
 }'
 ```
 
