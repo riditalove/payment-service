@@ -4,6 +4,7 @@
 
 `payment-service` is a Spring Boot service that:
 
+- Works with `auth-service` for JWT-based user authentication.
 - Creates and stores payments in PostgreSQL.
 - Encrypts incoming card numbers before persistence.
 - Publishes a `payment.created`-style event to RabbitMQ after payment creation.
@@ -18,7 +19,16 @@ The service follows a layered design:
 ## High-Level Architecture
 
 ```text
-Client
+Client (obtain JWT first)
+  |
+  v
+auth-service (/auth/register, /auth/login, /auth/validate)
+  |
+  v
+JWT token
+  |
+  v
+Client with Bearer token
   |
   v
 PaymentController (/payments)
@@ -39,7 +49,10 @@ PaymentService
 
 ```mermaid
 flowchart LR
-    C[Client] --> PC[PaymentController]
+    C[Client] --> AS[auth-service]
+    AS --> TK[JWT Token]
+    TK --> C2[Client with Bearer token]
+    C2 --> PC[PaymentController]
     PC --> PS[PaymentService]
 
     PS --> CES[CardEncryptionService]
@@ -165,6 +178,7 @@ Note: the current package name is `paymet` (as implemented in code).
 ```mermaid
 sequenceDiagram
     participant Client
+    participant Auth as auth-service
     participant Controller as PaymentController
     participant Service as PaymentService
     participant Encrypt as EncryptionServiceClient
@@ -172,6 +186,8 @@ sequenceDiagram
     participant Rabbit as RabbitMQ
     participant Processor as processor-service
 
+    Client->>Auth: POST /auth/login
+    Auth-->>Client: JWT token
     Client->>Controller: POST /payments
     Controller->>Service: createPayment(request)
     Service->>Encrypt: POST /encrypt
@@ -190,11 +206,22 @@ sequenceDiagram
 
 ---
 
+## Flow C: Authentication (JWT)
+
+1. Client registers user with `POST /auth/register`.
+2. Client logs in via `POST /auth/login`.
+3. `auth-service` verifies credentials and returns a signed JWT.
+4. Client sends JWT in `Authorization: Bearer <token>` when calling protected APIs.
+5. Services can validate token via `POST /auth/validate` before processing.
+
+---
+
 ## External Integrations
 
 - **PostgreSQL** for payment persistence.
 - **RabbitMQ** for async event delivery.
 - **Processor Service** consumes payment events and updates status.
+- **Auth Service** issues and validates JWT tokens for authenticated access.
 
 ---
 
@@ -222,6 +249,7 @@ From repository root:
 
 ```bash
 mvn -pl payment-service spring-boot:run
+mvn -pl auth-service spring-boot:run
 ```
 
 From `payment-service` directory:
@@ -238,6 +266,7 @@ Create payment:
 
 ```bash
 curl --location 'http://localhost:8082/payments' \
+--header 'Authorization: Bearer <jwt-token>' \
 --header 'Content-Type: application/json' \
 --data '{
   "amount": 19.99,
@@ -259,6 +288,38 @@ curl --location --request PATCH 'http://localhost:8082/payments/{paymentId}/stat
 --header 'Content-Type: application/json' \
 --data '{
   "status": "SUCCESS"
+}'
+```
+
+Register user:
+
+```bash
+curl --location 'http://localhost:8083/auth/register' \
+--header 'Content-Type: application/json' \
+--data '{
+  "username": "alice",
+  "password": "password123"
+}'
+```
+
+Login:
+
+```bash
+curl --location 'http://localhost:8083/auth/login' \
+--header 'Content-Type: application/json' \
+--data '{
+  "username": "alice",
+  "password": "password123"
+}'
+```
+
+Validate token:
+
+```bash
+curl --location 'http://localhost:8083/auth/validate' \
+--header 'Content-Type: application/json' \
+--data '{
+  "token": "<jwt-token>"
 }'
 ```
 

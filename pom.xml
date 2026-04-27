@@ -11,5 +11,6 @@
 	<modules>
 		<module>payment-service</module>
 		<module>processor-service</module>
+		<module>auth-service</module>
 	</modules>
 </project>

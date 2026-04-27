@@ -16,11 +16,13 @@ public class PaymentCreatedListener {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentCreatedListener.class);
 
-    private final ObjectMapper objectMapper;
+    /**
+     * Keep local mapper to avoid relying on ObjectMapper auto-configuration in this module.
+     */
+    private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final PaymentProcessingService paymentProcessingService;
 
-    public PaymentCreatedListener(ObjectMapper objectMapper, PaymentProcessingService paymentProcessingService) {
-        this.objectMapper = objectMapper;
+    public PaymentCreatedListener(PaymentProcessingService paymentProcessingService) {
         this.paymentProcessingService = paymentProcessingService;
     }
 
@@ -29,6 +31,10 @@ public class PaymentCreatedListener {
         containerFactory = "rabbitListenerContainerFactory"
     )
     public void onPaymentCreated(String body) {
+        if (body == null || body.isBlank()) {
+            log.warn("Skipping empty message body from queue {}", RabbitListenerConfiguration.PAYMENTS_QUEUE);
+            return;
+        }
         try {
             PaymentCreatedEvent event = objectMapper.readValue(body, PaymentCreatedEvent.class);
             log.info("Processing payment.created paymentId={}", event.paymentId());
